@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import Draggable from "react-draggable";
+import ToastContainer from "./Toast";
 
 // Log the React version at runtime to help debug findDOMNode issues
 if (typeof React !== "undefined" && React && React.version) {
@@ -20,6 +21,8 @@ function App() {
   const [apiHealthy, setApiHealthy] = useState(true);
   const [lastAddError, setLastAddError] = useState(null);
   const [lastAddPayload, setLastAddPayload] = useState(null);
+  // Toasts for lightweight notifications
+  const [toasts, setToasts] = useState([]);
 
   // Editing state
   const [editingId, setEditingId] = useState(null);
@@ -48,6 +51,32 @@ function App() {
   useEffect(() => {
     fetchTasks();
   }, [fetchTasks]);
+
+  // Load persisted lastAddPayload from localStorage (so retry survives reload)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("lastAddPayload");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setLastAddPayload(parsed);
+        setLastAddError({
+          status: "saved",
+          body: "Recovered from previous session",
+        });
+      }
+    } catch (e) {
+      // ignore parse errors
+    }
+  }, []);
+
+  // Toast helpers
+  const showToast = (message, type = "info", timeout = 4000) => {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    setToasts((s) => [...s, { id, message, type }]);
+    if (timeout > 0)
+      setTimeout(() => setToasts((s) => s.filter((t) => t.id !== id)), timeout);
+  };
+  const removeToast = (id) => setToasts((s) => s.filter((t) => t.id !== id));
 
   // Live clock + refresh for status colors
   useEffect(() => {
@@ -116,6 +145,11 @@ function App() {
         console.error("POST /tasks failed", res.status, bodyText);
         // Save last failed payload so user can retry
         setLastAddPayload(body);
+        try {
+          localStorage.setItem("lastAddPayload", JSON.stringify(body));
+        } catch (e) {
+          // ignore storage errors
+        }
         setLastAddError({ status: res.status, body: bodyText });
         throw new Error(`POST /tasks failed (${res.status})`);
       }
@@ -129,12 +163,14 @@ function App() {
       // clear any previous failed state
       setLastAddError(null);
       setLastAddPayload(null);
+      try {
+        localStorage.removeItem("lastAddPayload");
+      } catch (e) {}
+      showToast("Task added", "success");
     } catch (e) {
       console.error("Failed to add task:", e);
       // give user more info if available
-      alert(
-        "Could not add the task. Please try again. See console for details."
-      );
+      showToast("Could not add the task. Please try again.", "error");
     } finally {
       setAdding(false);
     }
@@ -143,6 +179,7 @@ function App() {
   // Retry the last failed add (repopulate fields and call addTask)
   const retryLastAdd = async () => {
     if (!lastAddPayload) return;
+    showToast("Retrying last failed add...", "info");
     // If there's a payload, call addTask with it directly
     await addTask(lastAddPayload);
   };
@@ -160,7 +197,7 @@ function App() {
       setTasks((prev) => prev.map((t) => (t._id === id ? updatedTask : t)));
     } catch (e) {
       console.error(e);
-      alert("Could not update the task. Please try again.");
+      showToast("Could not update the task. Please try again.", "error");
     }
   };
 
@@ -179,7 +216,7 @@ function App() {
       }
     } catch (e) {
       console.error(e);
-      alert("Could not delete the task. Please try again.");
+      showToast("Could not delete the task. Please try again.", "error");
     }
   };
 
@@ -208,7 +245,7 @@ function App() {
   // Save edit
   const saveEdit = async (id) => {
     if (!editText.trim()) {
-      alert("Task text is required.");
+      showToast("Task text is required.", "error");
       return;
     }
     setSavingEdit(true);
@@ -229,7 +266,7 @@ function App() {
       cancelEdit();
     } catch (e) {
       console.error(e);
-      alert("Could not save changes. Please try again.");
+      showToast("Could not save changes. Please try again.", "error");
       setSavingEdit(false);
     }
   };
@@ -715,6 +752,8 @@ function App() {
           );
         })}
       </div>
+      {/* Toasts */}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
     </div>
   );
 }
